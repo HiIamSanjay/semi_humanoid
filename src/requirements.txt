@@ -4,7 +4,7 @@
 numpy<2.0.0
 
 # --- Standard Libraries ---
-vosk sounddevice
+SpeechRecognition==3.14.3
 google-generativeai==0.8.5
 Pillow==9.0.1
 requests==2.32.5

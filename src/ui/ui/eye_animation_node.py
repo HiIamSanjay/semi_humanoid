@@ -6,24 +6,13 @@ import time
 import random
 import numpy as np
 import math
-import os
 
 # --- Pygame Initialization ---
-# MOVED: os.environ setup is now handled in the launch file or external env vars.
-# This ensures we don't overwrite the settings provided by ros2 launch.
-
 pygame.init()
-
-# --- Display Configuration ---
-# We configure the display mode.
-# If you want it FULLSCREEN on the specific monitor, you can switch flags.
-# For now, we keep NOFRAME so it looks like a clean robot face.
-pygame.display.set_mode((1, 1), pygame.NOFRAME) 
+pygame.font.init() # Ensure font is initialized
 info = pygame.display.Info()
-
-# Keeping your resolution. If you want it to fill the 1920x1080 screen, 
-# you can change this to 1920, 1080, but ensure your drawing logic scales well.
-WIDTH, HEIGHT = 1280, 720 
+WIDTH, HEIGHT = info.current_w, info.current_h
+font = pygame.font.SysFont('Arial', 30) # Debug font
 
 # --- Configuration ---
 # Colors
@@ -31,7 +20,7 @@ EYE_COLOR = (0, 136, 255); HAPPY_COLOR = (0, 136, 255); GREET_COLOR = (0, 255, 0
 LID_COLOR = (0, 0, 0); BG_COLOR = (0, 0, 0); SMILE_COLOR = HAPPY_COLOR
 ANGRY_COLOR = (255, 0, 0); PAMPER_COLOR = (255, 100, 100); TEAR_COLOR = (173, 216, 230)
 SURPRISE_COLOR = (255, 255, 0); FEAR_COLOR = (180, 150, 255)
-SPEAKING_COLOR = (200, 220, 255)
+TEXT_COLOR = (255, 255, 255)
 
 # Eye Parameters
 EYE_WIDTH, EYE_HEIGHT = 180, 180; EYE_CORNER_RADIUS = 45
@@ -46,13 +35,20 @@ SAD_CONFIG = {"gaze_x_amp": -20, "gaze_y_amp": 30, "droop_factor": 1.5, "mouth_f
 FEAR_CONFIG = {"wobble_speed": 15, "wobble_amp": 5, "pupil_scale": 0.8}
 SURPRISE_CONFIG = {"scale_amp": 1.3, "mouth_size": 80}
 PAMPER_CONFIG = {"glow_speed": 4, "glow_amp": 0.1, "bounce_speed": 3, "bounce_amp": 6, "stretch_speed": 6, "stretch_amp": 0.05}
-SPEAKING_CONFIG = {"pulse_speed": 8, "pulse_amp": 5, "eye_radius": 70, "mouth_radius": 50, "line_thickness": 8}
 
+# --- Configuration for Human-like Speaking Mouth ---
+SPEAKING_CONFIG = {
+    "transition_speed": 5.0,   
+    "oscillate_speed": 8.0,    # Slow/Human-like speed
+    "max_height": 90,          
+    "width": 160,              
+    "y_offset": 130            
+}
 
 class EyeAnimationNode(Node):
     """
     Controls a full suite of robot eye animations based on ROS topics.
-    Can also be controlled via keyboard for debugging.
+    Integrated with Active Listening and Advanced Mouth Rendering.
     """
     def __init__(self, screen):
         super().__init__('eye_animation_node')
@@ -67,17 +63,21 @@ class EyeAnimationNode(Node):
         
         # --- State Management ---
         self.is_person_present = False
-        self.robot_state = "listening"
+        self.robot_state = "listening" # Default state
         self.current_emotion = "neutral"
         self.is_mirroring = False
         self.emotion_start_time = time.time()
         
         # --- Animation Variables ---
-        self.is_nodding = False; self.blinking = False
+        self.is_nodding = False
+        self.blinking = False
         self.lid_progress = 0; self.emotion_anim_progress = 0
         self.blink_start_time = time.time(); self.blink_interval = random.uniform(3, 6)
         
-        self.get_logger().info(f"Eye Animation node configured for {WIDTH}x{HEIGHT} display.")
+        # --- Speaking State Variable ---
+        self.speak_intensity = 0.0
+
+        self.get_logger().info("Eye Animation node started: Debug Mode Active.")
 
     # --- ROS Callback Functions ---
     def person_callback(self, msg):
@@ -86,17 +86,10 @@ class EyeAnimationNode(Node):
         self.is_person_present = msg.data
 
     def state_callback(self, msg):
-        self.robot_state = msg.data
-        if self.robot_state == "speaking":
-            self.is_nodding = False
-            if not self.is_mirroring:
-                self.set_emotion("speaking")
-        elif self.robot_state == "listening":
-            self.is_nodding = True
-            if self.current_emotion == "speaking":
-                self.set_emotion("neutral")
-        else:
-            self.is_nodding = False
+        # FIX: Force lowercase and strip spaces to ensure matching works
+        self.robot_state = msg.data.lower().strip()
+        # Log state changes to terminal for debugging
+        self.get_logger().info(f"State received: '{self.robot_state}'")
 
     def emotion_callback(self, msg):
         if self.is_mirroring:
@@ -116,8 +109,21 @@ class EyeAnimationNode(Node):
             self.current_emotion = new_emotion
             self.emotion_start_time = time.time()
             self.emotion_anim_progress = 0
-            if new_emotion != "neutral":
-                self.is_nodding = False
+
+    def update_behavior_state(self):
+        """
+        Manages nodding logic based on 'Active Listening'.
+        The robot nods when listening to show attention, and stops when speaking.
+        """
+        # Ensure we match 'listening' regardless of exact string format
+        if "listening" in self.robot_state:
+            self.is_nodding = True
+        else:
+            self.is_nodding = False
+
+        # If we are displaying a strong emotion (like angry/fear), override nodding
+        if self.current_emotion != "neutral":
+            self.is_nodding = False
 
     # --- Drawing Logic ---
     def draw_rounded_eye(self, x, y, width, height, radius, color, offset=(0, 0)):
@@ -149,6 +155,56 @@ class EyeAnimationNode(Node):
         points = [(-1, 0.5), (-0.5, -0.5), (0, 0.5), (0.5, -0.5), (1, 0.5)]
         mouth_width, mouth_height, mouth_y_pos = 150, 25 * progress, HEIGHT // 2 + 80
         return [(WIDTH/2 + p[0]*mouth_width/2 + offset[0], mouth_y_pos + p[1]*mouth_height + offset[1]) for p in points]
+
+    # --- Advanced Speaking Mouth Animation ---
+    def draw_speaking_mouth(self):
+        dt = self.clock.get_time() / 1000.0
+        
+        # Smoothly transition intensity based on state
+        if "speaking" in self.robot_state:
+            self.speak_intensity = min(self.speak_intensity + dt * SPEAKING_CONFIG["transition_speed"], 1.0)
+        else:
+            self.speak_intensity = max(self.speak_intensity - dt * SPEAKING_CONFIG["transition_speed"], 0.0)
+
+        # Only draw if visible
+        if self.speak_intensity > 0.01:
+            cfg = SPEAKING_CONFIG
+            
+            # Oscillation (talking speed)
+            oscillation = (math.sin(time.time() * cfg["oscillate_speed"]) + 1) / 2
+            
+            # Current Opening Height (scales with intensity)
+            current_open_h = cfg["max_height"] * oscillation * self.speak_intensity
+            
+            # Shape Calculations
+            center_x = WIDTH // 2
+            center_y = EYE_Y_POS + EYE_HEIGHT + cfg["y_offset"]
+            mouth_w = cfg["width"]
+            
+            # Human-like movement: Bottom lip moves more than top lip
+            top_move = current_open_h * 0.3 
+            bottom_move = current_open_h * 0.7
+            
+            points = []
+            
+            # Generate Top Lip Curve
+            steps = 20
+            for i in range(steps + 1):
+                t = i / steps # 0.0 to 1.0
+                x = center_x - mouth_w/2 + (mouth_w * t)
+                curve_factor = 1 - (2*t - 1)**2
+                y = center_y - (top_move * curve_factor)
+                points.append((x, y))
+                
+            # Generate Bottom Lip Curve
+            for i in range(steps, -1, -1):
+                t = i / steps
+                x = center_x - mouth_w/2 + (mouth_w * t)
+                curve_factor = 1 - (2*t - 1)**2
+                y = center_y + (bottom_move * curve_factor)
+                points.append((x, y))
+            
+            pygame.draw.polygon(self.screen, EYE_COLOR, points)
 
     def draw_greet_emotion(self, progress):
         for dx in [-EYE_SPACING, EYE_SPACING]:
@@ -242,23 +298,16 @@ class EyeAnimationNode(Node):
         arc_rect = pygame.Rect(mouth_x - 120//2, mouth_y + smile_offset, 120, 60)
         pygame.draw.arc(self.screen, PAMPER_COLOR, arc_rect, math.pi, math.pi * 2, 5)
 
-    def draw_speaking_emotion(self, current_time):
-        cfg = SPEAKING_CONFIG
-        for dx in [-EYE_SPACING, EYE_SPACING]:
-            eye_center = (WIDTH // 2 + dx, EYE_Y_POS + cfg["eye_radius"])
-            pygame.draw.circle(self.screen, SPEAKING_COLOR, eye_center, cfg["eye_radius"], cfg["line_thickness"])
-        pulse = cfg["pulse_amp"] * math.sin(current_time * cfg["pulse_speed"])
-        mouth_radius = cfg["mouth_radius"] + pulse
-        mouth_center = (WIDTH // 2, EYE_Y_POS + EYE_HEIGHT + 70)
-        pygame.draw.circle(self.screen, SPEAKING_COLOR, mouth_center, mouth_radius, cfg["line_thickness"])
-
-
     def draw_neutral_emotion(self):
+        # 1. Update Behavior
+        self.update_behavior_state()
+        
+        # 2. Nodding Offset (Sine wave if active listening)
         y_offset = 20 * math.sin(time.time() * 10) if self.is_nodding else 0
         
+        # 3. Blinking Logic
         if not self.blinking and time.time() - self.blink_start_time > self.blink_interval:
             self.blinking, self.lid_progress, self.lid_direction, self.blink_start_time = True, 0, 1, time.time()
-        
         if self.blinking:
             dt = self.clock.get_time() / 1000.0
             if dt > 0:
@@ -266,21 +315,27 @@ class EyeAnimationNode(Node):
             if self.lid_progress >= 1: self.lid_direction = -1
             elif self.lid_progress <= 0:
                 self.blinking, self.lid_progress, self.blink_interval = False, 0, random.uniform(3, 6)
-                
+        
+        # 4. Draw Eyes
         for dx in [-EYE_SPACING, EYE_SPACING]:
             base_x = WIDTH // 2 + dx - EYE_WIDTH // 2
             self.draw_rounded_eye(base_x, EYE_Y_POS + y_offset, EYE_WIDTH, EYE_HEIGHT, EYE_CORNER_RADIUS, color=EYE_COLOR)
             self.draw_lids(base_x, EYE_Y_POS + y_offset, EYE_WIDTH, EYE_HEIGHT, blink_progress=self.lid_progress)
             
+        # 5. Draw Mouth Overlay
+        self.draw_speaking_mouth()
+
     def update_animations(self):
+        """Main drawing loop to select and render the correct emotion."""
         now = time.time()
         dt = self.clock.tick(60) / 1000.0
+        
         self.screen.fill(BG_COLOR)
 
-        if self.current_emotion not in ["neutral", "speaking"]:
+        if self.current_emotion != "neutral":
             self.emotion_anim_progress = min(self.emotion_anim_progress + dt / EMOTION_ANIM_DURATION, 1.0)
         else:
-            self.emotion_anim_progress = 1.0
+            self.emotion_anim_progress = 0
             
         if self.current_emotion == "greet":
             self.draw_greet_emotion(self.emotion_anim_progress)
@@ -298,16 +353,25 @@ class EyeAnimationNode(Node):
             self.draw_surprise_emotion(self.emotion_anim_progress)
         elif self.current_emotion == "pamper":
             self.draw_pamper_emotion(now, self.emotion_start_time, self.emotion_anim_progress)
-        elif self.current_emotion == "speaking":
-            self.draw_speaking_emotion(now)
         else:
             self.draw_neutral_emotion()
+
+        # --- DEBUG HUD ---
+        # This will show you exactly what state the code thinks it is in.
+        status_text = f"STATE: {self.robot_state.upper()}"
+        nod_text = f"NODDING: {self.is_nodding}"
+        
+        text_surf_1 = font.render(status_text, True, TEXT_COLOR)
+        text_surf_2 = font.render(nod_text, True, TEXT_COLOR)
+        
+        self.screen.blit(text_surf_1, (20, 20))
+        self.screen.blit(text_surf_2, (20, 60))
 
         pygame.display.flip()
 
 def main(args=None):
     rclpy.init(args=args)
-    screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.NOFRAME) 
+    screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
     pygame.display.set_caption("ROS 2 Eye Animator")
     
     eye_node = EyeAnimationNode(screen)
@@ -317,24 +381,21 @@ def main(args=None):
         for event in pygame.event.get():
             if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
                 running = False
+            # Keyboard overrides for debugging
             if event.type == pygame.KEYDOWN:
                 key_map = {
                     'h': "happy", 'a': "angry", 's': "sad",
                     'g': "greet", 'f': "fear", 'w': "surprise",
-                    'p': "pamper", 'n': "neutral", 't': "speaking"
+                    'p': "pamper",
+                    'n': "neutral"
                 }
                 key_name = pygame.key.name(event.key)
                 if key_name in key_map:
                     emotion = key_map[key_name]
                     eye_node.get_logger().info(f"Keyboard override: setting emotion to '{emotion}'")
-                    if emotion not in ["greet", "neutral", "speaking"]:
+                    if emotion not in ["greet", "neutral"]:
                         eye_node.is_mirroring = True
-                    if emotion == "speaking":
-                        eye_node.state_callback(String(data="speaking"))
-                    elif emotion == "neutral":
-                         eye_node.state_callback(String(data="listening"))
-                    else:
-                        eye_node.set_emotion(emotion)
+                    eye_node.set_emotion(emotion)
         
         rclpy.spin_once(eye_node, timeout_sec=0.0)
         eye_node.update_animations()

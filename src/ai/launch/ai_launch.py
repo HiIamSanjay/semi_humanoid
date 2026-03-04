@@ -15,14 +15,15 @@ def generate_launch_description():
             respawn=True,
             respawn_delay=2.0, # Brief delay before restarting.
         ),
-        Node(
-            package='ai',
-            executable='emotion_recognition',
-            name='emotion_recognition_node',
-            output='screen',
-            respawn=True,
-            respawn_delay=5.0, # Longer delay as this node can be slow to initialize.
-        ),
+        # Commenting out the emotion_recognition node to prevent lag on Raspberry Pi
+        # Node(
+        #     package='ai',
+        #     executable='emotion_recognition',
+        #     name='emotion_recognition_node',
+        #     output='screen',
+        #     respawn=True,
+        #     respawn_delay=5.0, 
+        # ),
         Node(
             package='ai',
             executable='person_detection',
@@ -32,4 +33,3 @@ def generate_launch_description():
             respawn_delay=2.0,
         ),
     ])
-

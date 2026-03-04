@@ -59,7 +59,7 @@ class CameraPublisher(Node):
         self.publisher_ = self.create_publisher(Image, '/video_feed', 10)
         
         # --- MODIFIED SECTION: Auto-detect camera ---
-        camera_name_to_find = "HD Web Camera"
+        camera_name_to_find = "USB2.0 Camera"
         self.get_logger().info(f"Searching for camera device named '{camera_name_to_find}'...")
         
         camera_index = find_camera_by_name(self.get_logger(), camera_name_to_find)
