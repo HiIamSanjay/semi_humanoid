@@ -5,7 +5,7 @@ import google.generativeai as genai
 import os
 
 # --- Configuration Constants ---
-GEMINI_API_KEY = "AIzaSyCLwvFDZbqnsBfkOV_WRe3nFcOzKtx-vog"
+GEMINI_API_KEY = ""
 
 
 if not GEMINI_API_KEY:

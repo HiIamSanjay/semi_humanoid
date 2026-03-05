@@ -67,7 +67,7 @@ class SpeechToTextNode(Node):
         """Handles switching between listening and speaking states."""
         if msg.data == "listening" and not self.listening_active:
             self.start_mic_stream()
-        elif msg.data == "speaking" and self.listening_active:
+        elif msg.data != "listening" and self.listening_active:
             self.stop_mic_stream()
 
     def start_mic_stream(self):
